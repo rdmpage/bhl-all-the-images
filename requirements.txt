@@ -1,0 +1,6 @@
+torch
+open_clip_torch
+pillow
+numpy
+psycopg[binary]
+pgvector
