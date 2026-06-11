@@ -22,9 +22,16 @@ This is one of three sibling repos that share a single page key
    vector, and upserts it into the `page_embedding` table. Image decoding is
    parallelised across CPU workers; encoding uses the best available device.
    The run is **resumable** — keys already in the table are skipped.
-2. **`search.py`** embeds a query (an image file or an in-set page) with the
-   same model and returns the nearest pages by cosine distance (exact KNN),
-   optionally writing an HTML contact sheet for eyeballing the results.
+2. **`search.py`** embeds a query with the same model and returns the nearest
+   pages by cosine distance (exact KNN), optionally writing an HTML contact
+   sheet for eyeballing the results. A query can be an **image file**, an
+   **in-set page** (`--page BarCode/seq`), or — because CLIP maps text into the
+   *same* 512-d space — a **text phrase** (`--text "a map"`), which ranks pages
+   directly with no labels to precompute.
+3. **`label.py`** uses that shared space the other way round: it scores the
+   already-stored page vectors against a set of candidate text labels (softmax
+   across the label set) to **zero-shot classify** pages — e.g. map / portrait /
+   plate / beetle — without re-embedding any images.
 
 The key is derived straight from the thumb path, so every result joins back to
 the viewer and to the text repo on `BarCode + seq`.
@@ -67,10 +74,21 @@ Search:
 
 # an in-set page — "images like this one":
 .venv/bin/python search.py --page systemaaviumaus00math/378 -k 20 --html results.html
+
+# a text phrase — CLIP ranks pages against the words directly:
+.venv/bin/python search.py --text "a map" -k 30 --html maps.html
 ```
 
 Each result line is `cosine  BarCode/seq  thumb_path`. `--html` writes a contact
 sheet (query + ranked thumbnails) to the given path.
+
+Zero-shot label pages against candidate text labels (built-in set, a `--labels`
+file, or repeated `--label`); `--only`/`--min-score` filter to confident hits:
+
+```bash
+.venv/bin/python label.py --limit 200 --html labels.html
+.venv/bin/python label.py --labels labels.txt --only map --min-score 0.5 --html maps.html
+```
 
 ## Notes & current state
 
@@ -100,4 +118,6 @@ sheet (query + ranked thumbnails) to the given path.
 | `config.py` | thumbs dir, DB DSN, model, device auto-detect |
 | `db/schema.sql` | pgvector table (exact KNN; IVFFlat noted for scaling) |
 | `embed.py` | thumbs → CLIP → pgvector, parallel decode, resumable |
-| `search.py` | query by `--image` or `--page`, top-K, optional `--html` |
+| `search.py` | query by `--image`, `--page`, or `--text`; top-K, optional `--html` |
+| `label.py` | zero-shot label stored vectors against candidate text labels |
+| `examples/` | documented sample query images |
