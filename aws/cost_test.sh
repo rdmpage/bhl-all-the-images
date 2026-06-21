@@ -99,6 +99,8 @@ echo "  manifest: $(wc -l < "$WORK/test.tsv") pages"
 # override with SOURCE=jp2 to measure the archival path for comparison.
 SOURCE=${SOURCE:-webp}
 WEBP_SIZE=${WEBP_SIZE:-medium}   # ~JP2-equivalent retrieval; 'small' is lossy
+rm -rf "$WORK/out"   # always re-measure: embed_s3 skips an existing output, and
+                     # a benchmark must re-run (e.g. after switching JP2 -> webp)
 say "Timed embed (ViT-B/32, source=$SOURCE). Weights download once, before timing."
 # HF_HUB_OFFLINE=0 so the first run can fetch the weights; embed_s3 starts its
 # clock AFTER model load, so the reported minutes are pure decode+encode.
