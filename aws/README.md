@@ -4,6 +4,18 @@ Transient, spot-priced compute in **us-east-2** (same region as
 `s3://bhl-open-data`, so image reads are free). Output is ~65–130 GB of vectors
 written to your own S3 bucket — that's the *only* thing that leaves AWS.
 
+## Source: read the webp derivatives, not the JP2 (`--source webp`)
+
+The bucket has a `web/` folder of webp derivatives
+(`web/<barcode>/<barcode>_<seq>_<size>.webp`, sizes thumb/small/medium/large/
+full) parallel to the archival `images/` JP2. **Embedding is decode-bound**, and
+webp decodes ~20–40× faster than JPEG-2000, so `embed_s3.py --source webp`
+(default `--webp-size medium`) is the cost path — it turns a ~$470 full-corpus
+run into roughly $25–50 on Spot. `_medium` (~465px) measured ~JP2-equivalent
+retrieval (p@5 0.60 vs 0.63); `_small` is lossy (0.53), avoid it. Missing
+derivatives transparently fall back to the JP2. CLIP downsamples to 224px, so
+the JP2's extra resolution is wasted regardless.
+
 ## 0. Confirm the bucket key layout (one-time)
 
 ```bash

@@ -38,6 +38,7 @@ from PIL import Image
 import boto3
 from botocore import UNSIGNED
 from botocore.config import Config
+from botocore.exceptions import ClientError
 import pyarrow as pa
 import pyarrow.parquet as pq
 
@@ -94,6 +95,34 @@ def reduced_jp2(data, target=TARGET_PX):
         except Exception:
             if r == 0:
                 raise  # genuinely undecodable, even at full resolution
+
+
+def fetch_bytes(key, tries=4):
+    """Read an S3 object's bytes; None if genuinely absent or still unreachable.
+    A 404 (missing key) returns at once -- only transient errors back off + retry,
+    so a missing webp derivative falls through to the JP2 cheaply."""
+    for attempt in range(tries):
+        try:
+            return SRC_S3.get_object(Bucket=BUCKET, Key=key)["Body"].read()
+        except ClientError as e:
+            if e.response.get("Error", {}).get("Code") in ("NoSuchKey", "404"):
+                return None
+            if attempt == tries - 1:
+                return None
+            time.sleep(0.5 * (attempt + 1))
+        except Exception:
+            if attempt == tries - 1:
+                return None
+            time.sleep(0.5 * (attempt + 1))
+
+
+def webp_key(jp2_key, size):
+    """Map an images/ JP2 key to its web/ webp derivative, preserving the exact
+    zero-padding: images/<bc>/<bc>_0007.jp2 -> web/<bc>/<bc>_0007_<size>.webp"""
+    base = jp2_key[:-4] if jp2_key.endswith(".jp2") else jp2_key
+    if base.startswith("images/"):
+        base = "web/" + base[len("images/"):]
+    return f"{base}_{size}.webp"
 
 
 def read_shard(path):
@@ -167,6 +196,15 @@ def main():
     ap.add_argument("--min-std", type=float, default=0.0,
                     help="skip near-blank pages: drop if grayscale stddev < this "
                          "(0 = keep everything; ~10 cuts blank/cream leaves)")
+    ap.add_argument("--source", choices=["jp2", "webp"], default="jp2",
+                    help="read archival JP2 (images/) or the webp derivative "
+                         "(web/); webp decodes ~38x faster, falls back to JP2 "
+                         "if a derivative is missing")
+    ap.add_argument("--webp-size", default="medium",
+                    choices=["thumb", "small", "medium", "large", "full"],
+                    help="webp derivative size; 'medium' (~465px) gives ~JP2-"
+                         "equivalent retrieval (measured p@5 0.60 vs 0.63); "
+                         "'small' is faster but lossy (0.53), 'thumb' too small")
     args = ap.parse_args()
 
     shard_local, out_uri, name = resolve_shard(args)
@@ -175,7 +213,8 @@ def main():
         return
 
     items = read_shard(shard_local)
-    print(f"{len(items):,} images in {name}", file=sys.stderr)
+    src_desc = args.source + (f" (_{args.webp_size})" if args.source == "webp" else "")
+    print(f"{len(items):,} images in {name}  [source: {src_desc}]", file=sys.stderr)
     if not items:
         return
 
@@ -188,26 +227,39 @@ def main():
 
     def fetch(item):
         key, barcode, seq = item
-        data = None
-        for attempt in range(4):  # belt-and-braces on top of botocore retries
+        status = "ok"
+        im = None
+        if args.source == "webp":
+            data = fetch_bytes(webp_key(key, args.webp_size))
+            if data is not None:
+                try:
+                    im = Image.open(io.BytesIO(data)).convert("RGB")
+                except Exception:
+                    im = None
+            if im is None:  # missing/undecodable webp -> fall back to the JP2
+                data = fetch_bytes(key)
+                if data is None:
+                    return barcode, seq, None, "fail"
+                try:
+                    im = reduced_jp2(data)
+                except Exception:
+                    return barcode, seq, None, "fail"
+                status = "fallback"
+        else:
+            data = fetch_bytes(key)
+            if data is None:
+                return barcode, seq, None, "fail"
             try:
-                data = SRC_S3.get_object(Bucket=BUCKET, Key=key)["Body"].read()
-                break
+                im = reduced_jp2(data)
             except Exception:
-                if attempt == 3:
-                    return barcode, seq, None, "fail"  # unreachable object
-                time.sleep(0.5 * (attempt + 1))
-        try:
-            im = reduced_jp2(data)
-        except Exception:
-            return barcode, seq, None, "fail"  # decode failure
+                return barcode, seq, None, "fail"
         if args.min_std > 0 and np.asarray(im.convert("L")).std() < args.min_std:
             return barcode, seq, None, "blank"  # near-empty scan -> skip
-        return barcode, seq, preprocess(im), "ok"
+        return barcode, seq, preprocess(im), status
 
     barcodes, seqs, vecs = [], [], []
     batch_keys, batch_t = [], []
-    done, failed, blank, t0 = 0, 0, 0, time.time()
+    done, failed, blank, fellback, t0 = 0, 0, 0, 0, time.time()
 
     def flush():
         nonlocal done
@@ -234,6 +286,8 @@ def main():
             if status == "blank":
                 blank += 1
                 continue
+            if status == "fallback":
+                fellback += 1
             batch_keys.append((b, s))
             batch_t.append(t)
             if len(batch_t) >= args.batch_size:
@@ -249,8 +303,9 @@ def main():
                               pa.list_(pa.float32(), EMBED_DIM)),
     })
     write_output(table, out_uri, name)
+    extra = f", {fellback:,} jp2-fallback" if args.source == "webp" else ""
     print(f"wrote {out_uri}: {len(barcodes):,} vectors "
-          f"({failed:,} dropped after retries, {blank:,} blank-skipped) in "
+          f"({failed:,} dropped after retries, {blank:,} blank-skipped{extra}) in "
           f"{(time.time() - t0) / 60:.1f}m", file=sys.stderr)
 
 

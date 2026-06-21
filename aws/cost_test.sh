@@ -95,11 +95,16 @@ ITEMS=$(( (TARGET + PAGES_PER_ITEM - 1) / PAGES_PER_ITEM ))
 echo "  manifest: $(wc -l < "$WORK/test.tsv") pages"
 
 # ---- timed embed (ViT-B/32, blank filter on) ---------------------------------
-say "Timed embed (ViT-B/32). Weights download once, before timing starts."
+# Source defaults to the webp derivative (web/, ~38x faster to decode than JP2);
+# override with SOURCE=jp2 to measure the archival path for comparison.
+SOURCE=${SOURCE:-webp}
+WEBP_SIZE=${WEBP_SIZE:-medium}   # ~JP2-equivalent retrieval; 'small' is lossy
+say "Timed embed (ViT-B/32, source=$SOURCE). Weights download once, before timing."
 # HF_HUB_OFFLINE=0 so the first run can fetch the weights; embed_s3 starts its
 # clock AFTER model load, so the reported minutes are pure decode+encode.
 HF_HUB_OFFLINE=0 BHL_CLIP_MODEL=ViT-B-32 BHL_CLIP_PRETRAINED=laion2b_s34b_b79k \
   "$VENV" "$SCRIPT_DIR/embed_s3.py" --shard "$WORK/test.tsv" --out "$WORK/out" \
+  --source "$SOURCE" --webp-size "$WEBP_SIZE" \
   --batch-size 128 --fetch-workers $(( VCPU * 4 )) --min-std 10 \
   2>&1 | tee "$WORK/embed.log"
 
