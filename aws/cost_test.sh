@@ -70,9 +70,12 @@ if [ "$SKIP_SETUP" != "1" ]; then
   command -v "$PYTHON" >/dev/null 2>&1 || sudo dnf install -y python3.11 || true
   PYTHON=python3.11; command -v python3.11 >/dev/null 2>&1 || PYTHON=python3
   "$PYTHON" -m venv "$WORK/.venv"
-  # CPU-only torch wheel: avoids pulling the multi-GB CUDA build on a CPU box.
+  # CPU-only torch AND torchvision from the SAME index, so their versions match.
+  # (open_clip pulls in torchvision; a PyPI torchvision against a CPU-index torch
+  # gives "operator torchvision::nms does not exist".) This also avoids the
+  # multi-GB CUDA build on a CPU box.
   "$WORK/.venv/bin/pip" -q install --upgrade pip
-  "$WORK/.venv/bin/pip" -q install --index-url https://download.pytorch.org/whl/cpu torch
+  "$WORK/.venv/bin/pip" -q install --index-url https://download.pytorch.org/whl/cpu torch torchvision
   "$WORK/.venv/bin/pip" -q install open_clip_torch pillow numpy boto3 pyarrow
 fi
 VENV="$WORK/.venv/bin/python"
