@@ -1,0 +1,9 @@
+# CPU build of torch (the worker is decode-bound, not GPU-bound). For a GPU
+# task tier, install the matching CUDA wheel instead.
+#   pip install -r requirements.txt --extra-index-url https://download.pytorch.org/whl/cpu
+torch
+open_clip_torch
+pillow
+numpy
+boto3
+pyarrow

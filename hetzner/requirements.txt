@@ -1,0 +1,3 @@
+psycopg[binary]
+pyarrow
+boto3            # only needed when --src is an s3:// uri
