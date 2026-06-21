@@ -8,3 +8,4 @@ results/
 .claude/settings.local.json
 tier0/
 cost_test_work/
+*.pem

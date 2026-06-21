@@ -69,6 +69,8 @@ if [ "$SKIP_SETUP" != "1" ]; then
   say "Installing deps (CPU torch; one-time)"
   command -v "$PYTHON" >/dev/null 2>&1 || sudo dnf install -y python3.11 || true
   PYTHON=python3.11; command -v python3.11 >/dev/null 2>&1 || PYTHON=python3
+  rm -rf "$WORK/.venv"   # always start clean: a half-built venv from a failed
+                         # earlier run is the usual source of import errors
   "$PYTHON" -m venv "$WORK/.venv"
   # CPU-only torch AND torchvision from the SAME index, so their versions match.
   # (open_clip pulls in torchvision; a PyPI torchvision against a CPU-index torch
@@ -77,6 +79,9 @@ if [ "$SKIP_SETUP" != "1" ]; then
   "$WORK/.venv/bin/pip" -q install --upgrade pip
   "$WORK/.venv/bin/pip" -q install --index-url https://download.pytorch.org/whl/cpu torch torchvision
   "$WORK/.venv/bin/pip" -q install open_clip_torch pillow numpy boto3 pyarrow
+  # Fail fast & clearly if the torch/torchvision pair is mismatched.
+  "$WORK/.venv/bin/python" -c "import torch, torchvision, open_clip" \
+    || { echo "ERROR: torch/torchvision/open_clip import failed (version mismatch)" >&2; exit 1; }
 fi
 VENV="$WORK/.venv/bin/python"
 VCPU=$(nproc)
