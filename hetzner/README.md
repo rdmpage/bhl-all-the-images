@@ -33,29 +33,33 @@ COPY into the **bare** table first — fast. ~63M rows is a matter of minutes.
 psql -d bhl -f ../db/index_hetzner.sql      # PK + HNSW; budget a few hours
 ```
 
-## 4. Query it
+## 4. Serve it
 
-`../search.py` works unchanged except for the column type: `halfvec` needs the
-query vector cast. Two small edits to `search.py`:
+`search_api.py` (FastAPI) is the serving process: it loads the same OpenCLIP
+model, encodes a text/image query, runs the pgvector ANN, and returns JSON with
+public S3 webp image URLs. Run it next to Postgres:
 
-```python
-# after computing qvec (a float32 numpy array), build its pgvector literal:
-qstr = "[" + ",".join(f"{x:.6g}" for x in qvec) + "]"
-
-# and cast both placeholders to halfvec in the query:
-cur.execute(
-    "SELECT barcode, seq, 1 - (embedding <=> %s::halfvec) AS score "
-    "FROM page_embedding ORDER BY embedding <=> %s::halfvec LIMIT %s",
-    (qstr, qstr, args.k + 1),
-)
+```bash
+pip install -r requirements-api.txt          # CPU torch + fastapi + ...
+export DATABASE_URL=postgresql:///bhl
+uvicorn search_api:app --host 127.0.0.1 --port 8000
+curl 'http://127.0.0.1:8000/search?q=a+colour+plate+of+birds&k=6'
 ```
 
-Optionally `SET hnsw.ef_search = 100;` per connection to trade speed for
-recall. (Drop the `register_vector` call — the literal cast replaces it.)
+Key `halfvec` details (already handled in `search_api.py`): the query vector is
+sent as a pgvector text literal `[v1,v2,...]` and cast `%s::halfvec` (no
+`register_vector` adapter needed); `SET hnsw.ef_search = <n>` per query trades
+speed for recall — and note `SET` takes a literal, **not** a bind parameter, so
+the value is interpolated, not passed as `%s`.
 
-Note: `thumb_path()` in `search.py` points at the local viewer cache, which
-doesn't exist here. For a hosted UI, map `(barcode, seq)` to a BHL page-image
-URL instead — the key still joins back to BHL exactly as before.
+**For the full validated walkthrough — box, Postgres, pgvector build, load,
+index, serve, and the PHP demo — follow [`dry_run.md`](dry_run.md).** It is the
+tested recipe (Ubuntu 26.04 / PG 18) with every gotcha folded in.
+
+Image URLs are reconstructed from `(barcode, seq)` as
+`web/<bc>/<bc>_<seq:04d>_<size>.webp` on the public bucket — nothing is hosted
+here; the key still joins back to BHL exactly as before. (`../search.py` remains
+the local-CLI tool against the old `vector(512)` PoC table; it is not used here.)
 
 ## Sizing cheat-sheet
 

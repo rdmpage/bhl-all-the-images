@@ -15,6 +15,25 @@ This is one of three sibling repos that share a single page key
 - `bhl-all-the-text` — OCR text fetch + locality / taxonomic-name extraction.
 - `bhl-all-the-images` — *this repo*.
 
+## Two halves of this repo
+
+1. **Local PoC** (this README below) — `embed.py` / `search.py` / `label.py`
+   over the 218k local thumbnail cache and a local pgvector DB. Where the
+   approach was first validated.
+2. **BHL-wide scale-up** — embed *all* ~63M BHL pages on AWS (in-region, reading
+   the public `bhl-open-data` webp derivatives), then serve the vectors from a
+   single pgvector box and search them from a thin web demo:
+   - `aws/` — the in-region embedding workers + the cost/eval harness.
+   - `db/schema_hetzner.sql`, `hetzner/load_parquet.py`, `hetzner/search_api.py`
+     — the serving half (`halfvec` + HNSW + a FastAPI CLIP search service).
+   - **[`hetzner/dry_run.md`](hetzner/dry_run.md)** — the tested end-to-end
+     runbook (✅ validated on a live box 2026-06-22), from bare OS to a working
+     search endpoint on the Tier-0 vectors, no AWS spend.
+   - `demo/index.php` — a PHP front-end (text + image-similarity search).
+
+   See `hetzner/README.md` and `aws/README.md` for the architecture rationale
+   (embed where the data is; serve the tiny vectors anywhere).
+
 ## How it works
 
 1. **`embed.py`** walks `cache/thumbs/{BarCode}/{seq}.webp`, runs each image

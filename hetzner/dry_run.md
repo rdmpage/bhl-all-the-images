@@ -1,5 +1,10 @@
 # Hetzner dry run — prove the whole serve chain on the Tier-0 vectors
 
+> ✅ **Validated end-to-end on 2026-06-22** — a live Hetzner Cloud box running
+> Ubuntu 26.04 / Postgres 18.4 / pgvector (built from source). Text *and*
+> image-similarity search both return coherent results through the PHP demo.
+> The steps below are the actual recipe that worked, gotchas folded in.
+
 Goal: stand up the *entire* serving half (pgvector + halfvec + HNSW + a CLIP
 search API) on a small, cheap Hetzner Cloud box, fed by the ~1.2k Tier-0 vectors
 you already have on disk. **No AWS spend** — this validates plumbing, not scale.
@@ -27,7 +32,11 @@ On ARM, see the note in step 5 about the torch wheel.
 ```bash
 ssh root@<box-ip>
 apt update && apt -y upgrade
-apt -y install python3-venv git
+apt -y install git
+# venv needs the *version-matched* package, not the generic one. On Ubuntu 26.04
+# the default python3 is 3.14, so it's python3.14-venv (the generic
+# `python3-venv` does NOT pull ensurepip and `python3 -m venv` then fails):
+apt -y install "python$(python3 -c 'import sys;print(f"{sys.version_info.major}.{sys.version_info.minor}")')-venv"
 ```
 
 ## 1. Postgres (distro default) + pgvector ≥ 0.7
@@ -77,6 +86,7 @@ Postgres stays bound to localhost (default) — only the API port is ever expose
 ```bash
 git clone https://github.com/rdmpage/bhl-all-the-images.git
 cd bhl-all-the-images
+# (already cloned earlier? just `git pull origin main` to pick up new commits)
 psql -d bhl -f db/schema_hetzner.sql        # bare halfvec(512) table
 ```
 
@@ -172,7 +182,24 @@ as the existing `bhl-elastic-test` site, just a different URL.
 > header checked in `search_api.py`, or Caddy basic-auth / rate-limiting. The
 > dry run behind an SSH tunnel needs none of this.
 
-## 7. Tear down
+## 7. Run the demo front-end
+
+`demo/index.php` is a thin PHP page that curls the API **server-side** (so plain
+HTTP to the box IP is fine — no CORS, no mixed-content) and renders results as a
+thumbnail grid. It runs anywhere with PHP; easiest is the built-in server on
+your laptop, pointed at the box via the `BHL_SEARCH_API` env var:
+
+```bash
+# on the laptop, in the repo:
+export BHL_SEARCH_API=http://<box-ip>:8000     # the IP from step 6
+php -S localhost:8080 -t demo
+# open http://localhost:8080/
+```
+
+Text box = phrase search; file picker = "find similar pages" (image upload).
+If `BHL_SEARCH_API` is unset the page says so rather than erroring cryptically.
+
+## 8. Tear down
 
 The box is hourly-billed and holds nothing precious (vectors are reproducible
 from the parquet). **Delete it from the Hetzner console when finished** —
