@@ -1,0 +1,176 @@
+# Hetzner dry run — prove the whole serve chain on the Tier-0 vectors
+
+Goal: stand up the *entire* serving half (pgvector + halfvec + HNSW + a CLIP
+search API) on a small, cheap Hetzner Cloud box, fed by the ~1.2k Tier-0 vectors
+you already have on disk. **No AWS spend** — this validates plumbing, not scale.
+The same steps re-run unchanged when you later load a 1M-page slice or the full
+63M corpus; only the box size and load time change.
+
+What this de-risks before the real run:
+- `halfvec` on **pgvector ≥ 0.7** — never actually exercised yet (local is 0.4.1).
+- HNSW build + cosine query against `halfvec_cosine_ops`.
+- the CLIP-in-the-loop search API (text *and* image queries).
+- the public S3 webp image URLs the UI will render.
+
+---
+
+## 0. Box
+
+Hetzner Cloud, ~4 vCPU / 8 GB, **hourly billing — destroy it when done**. Any
+small box works; pick by what's in stock:
+- **CX32** (x86) or — often cheaper / more available — **CAX21** (Ampere ARM64).
+- 8 GB just gives CPU torch headroom; the 1.2k vectors are nothing. (The 128 GB
+  dedicated box only matters at 63M.)
+
+On ARM, see the note in step 5 about the torch wheel.
+
+```bash
+ssh root@<box-ip>
+apt update && apt -y upgrade
+apt -y install python3-venv git
+```
+
+## 1. Postgres (distro default) + pgvector ≥ 0.7
+
+We need only **Postgres ≥ 14** and **pgvector ≥ 0.7** (for `halfvec`) — do NOT
+pin a major version. Install whatever the distro ships:
+
+```bash
+apt -y install postgresql postgresql-contrib
+psql --version          # note the major, e.g. 17 or 18
+```
+
+Then pgvector. On a fresh Ubuntu release the `postgresql-NN-pgvector` package is
+often not in the repos yet, so the reliable route is a source build. Build the
+**latest release tag** — do NOT pin v0.8.0, which predates Postgres 18 and won't
+compile against its headers:
+
+```bash
+# try the package first; skip to the source build if it's missing:
+apt -y install postgresql-server-dev-all build-essential
+git clone https://github.com/pgvector/pgvector.git
+cd pgvector
+git checkout "$(git describe --tags "$(git rev-list --tags --max-count=1)")"   # newest tag
+make && sudo make install && cd ~
+#  if make still errors on a brand-new PG major, drop the checkout and build HEAD
+```
+
+Create a DB role for the OS user, then the database. Postgres only makes the
+`postgres` superuser by default, so `createdb` as e.g. root fails with
+`role "<user>" does not exist` until you add one:
+
+```bash
+sudo -u postgres createuser --superuser "$(whoami)"
+createdb bhl
+psql -d bhl -c "CREATE EXTENSION vector; SELECT extversion FROM pg_extension WHERE extname='vector';"
+#  expect >= 0.7.0  (peer auth maps the OS user -> same-named role over the socket)
+```
+
+> The role must match whatever OS user later runs `load_parquet.py` and
+> `search_api.py` (both default to `postgresql:///bhl` = peer auth, no password).
+> If you run them as root, the `root` role above covers it.
+
+Postgres stays bound to localhost (default) — only the API port is ever exposed.
+
+## 2. Code + schema
+
+```bash
+git clone https://github.com/rdmpage/bhl-all-the-images.git
+cd bhl-all-the-images
+psql -d bhl -f db/schema_hetzner.sql        # bare halfvec(512) table
+```
+
+## 3. Get the Tier-0 vectors onto the box
+
+The `tier0/` parquet is gitignored, so copy it up from your laptop (it's tiny):
+
+```bash
+# on the laptop, from the repo root:
+scp tier0/out_web_medium/wide.parquet root@<box-ip>:~/bhl-all-the-images/hetzner/
+```
+
+(`out_web_medium` = webp/medium, ViT-B/32 — the set that matches the production
+plan. `out_b_wide` is the JP2 equivalent if you'd rather compare.)
+
+## 4. Load + index
+
+```bash
+cd ~/bhl-all-the-images/hetzner
+python3 -m venv .venv && . .venv/bin/activate
+pip install -r requirements.txt
+python load_parquet.py --src wide.parquet --dsn postgresql:///bhl
+#  -> "done: ~1,205 vectors loaded"   <-- first real halfvec COPY
+
+psql -d bhl -f ../db/index_hetzner.sql      # PK + HNSW; instant at this size
+```
+
+## 5. Search API
+
+```bash
+# x86 box:
+pip install -r requirements-api.txt --extra-index-url https://download.pytorch.org/whl/cpu
+# ARM box (CAX): drop the extra index -- that wheel index is x86-only; PyPI has
+# the aarch64 CPU torch wheel:
+#   pip install -r requirements-api.txt
+export DATABASE_URL=postgresql:///bhl
+uvicorn search_api:app --host 127.0.0.1 --port 8000
+#  first start downloads CLIP weights (~600 MB) once, then caches them
+```
+
+Smoke-test from a second shell on the box:
+
+```bash
+curl 'http://127.0.0.1:8000/healthz'
+curl 'http://127.0.0.1:8000/search?q=a+colour+plate+of+birds&k=6'
+curl -F file=@/path/to/a/page.jpg 'http://127.0.0.1:8000/search?k=6'
+```
+
+Each result has `score`, `thumb_url`, and `image_url` pointing straight at the
+public S3 webp — open one in a browser to confirm retrieval looks sane (compare
+against `tier0/q_*.html` from the local trial).
+
+## 6. Expose it to the demo
+
+**Quickest (private, for testing from your laptop)** — SSH tunnel, nothing opened:
+
+```bash
+ssh -N -L 8000:127.0.0.1:8000 root@<box-ip>
+# now http://127.0.0.1:8000/search?... works locally; point the PHP demo there
+```
+
+**Proper (public HTTPS, for a Heroku-hosted demo to reach)** — Caddy gives you
+auto-TLS if you point a (sub)domain at the box:
+
+```bash
+apt -y install caddy
+# /etc/caddy/Caddyfile:
+#   search.example.org {
+#       reverse_proxy 127.0.0.1:8000
+#   }
+systemctl reload caddy
+```
+
+Then run uvicorn under systemd (so it survives logout) and the demo calls
+`https://search.example.org/search?q=...` — the same curl-an-HTTP-endpoint shape
+as the existing `bhl-elastic-test` site, just a different URL.
+
+> For a public endpoint, add a cheap guard before any real traffic: an API key
+> header checked in `search_api.py`, or Caddy basic-auth / rate-limiting. The
+> dry run behind an SSH tunnel needs none of this.
+
+## 7. Tear down
+
+The box is hourly-billed and holds nothing precious (vectors are reproducible
+from the parquet). **Delete it from the Hetzner console when finished** —
+re-running this file rebuilds it in minutes.
+
+---
+
+### When you graduate to a real corpus
+
+- Bigger slice / full run: same steps; swap step 3 for `aws s3 sync s3://MY-BUCKET/out/`
+  (or `load_parquet.py --src s3://...`) and give step 4's index build RAM + hours.
+- Move Postgres to the 128 GB dedicated box; the API can stay on the same box
+  (co-located) or a small companion — keep it next to the DB, not on Heroku.
+- Persist the original image key (or padding width) in the parquet so
+  `image_url()` doesn't have to assume 4-digit `seq` padding.
