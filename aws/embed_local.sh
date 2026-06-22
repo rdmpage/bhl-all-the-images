@@ -25,6 +25,11 @@ SOURCE="${BHL_SOURCE:-webp}"
 SIZE="${BHL_WEBP_SIZE:-medium}"
 MIN_STD="${BHL_MIN_STD:-10}"
 
+# Let the CLIP weights download on first use. embed_s3.py defaults
+# HF_HUB_OFFLINE=1 (its Docker image bakes the weights in); on a plain box they
+# must be fetched once, after which they're cached for every later shard.
+export HF_HUB_OFFLINE="${HF_HUB_OFFLINE:-0}"
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [ -z "${PYTHON:-}" ]; then
   if [ -x "$SCRIPT_DIR/../.venv/bin/python" ]; then
