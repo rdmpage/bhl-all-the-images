@@ -102,7 +102,9 @@ def search(qvec, k, size):
     lit = to_literal(qvec)
     with _pool.connection() as conn:
         with conn.cursor() as cur:
-            cur.execute("SET LOCAL hnsw.ef_search = %s", (EF_SEARCH,))
+            # SET takes no bind parameters (Postgres grammar wants a literal),
+            # so interpolate the int directly -- EF_SEARCH is int(os.environ...).
+            cur.execute(f"SET hnsw.ef_search = {int(EF_SEARCH)}")
             cur.execute(
                 "SELECT barcode, seq, 1 - (embedding <=> %s::halfvec) AS score "
                 "FROM page_embedding "
