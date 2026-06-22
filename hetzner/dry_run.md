@@ -131,7 +131,21 @@ against `tier0/q_*.html` from the local trial).
 
 ## 6. Expose it to the demo
 
-**Quickest (private, for testing from your laptop)** — SSH tunnel, nothing opened:
+**Quick & dirty (HTTP by IP, while messing around)** — bind to all interfaces
+and let the PHP demo curl `http://<box-ip>:8000`. The demo's API call is
+server-side, so plain HTTP is fine (no CORS, no mixed-content):
+
+```bash
+uvicorn search_api:app --host 0.0.0.0 --port 8000
+# ensure inbound TCP 8000 is allowed: if a Hetzner Cloud Firewall is attached,
+# add a rule; if ufw is active on the box, `ufw allow 8000`.
+```
+
+> Caveat: this is an unauthenticated API on a public IP. Fine for a short-lived
+> dry-run box you tear down; do NOT leave it up. Add an API key / Caddy
+> basic-auth (below) before anything resembling real traffic.
+
+**Private (no port opened)** — SSH tunnel instead:
 
 ```bash
 ssh -N -L 8000:127.0.0.1:8000 root@<box-ip>
