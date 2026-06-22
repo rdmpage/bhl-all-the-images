@@ -6,6 +6,7 @@ open_clip_torch
 pillow
 numpy
 fastapi
+python-multipart        # required by FastAPI for the POST /search image upload
 uvicorn[standard]
 psycopg[binary]
 psycopg_pool
