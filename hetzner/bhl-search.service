@@ -10,6 +10,11 @@
 #
 # Adjust WorkingDirectory / ExecStart if your repo or venv live elsewhere
 # (check: ls /root/bhl-all-the-images/hetzner/.venv/bin/uvicorn).
+#
+# API key: put the secret in /etc/bhl-search.env (NOT in this committed file):
+#   echo 'BHL_SEARCH_KEY=<your-uuid>' > /etc/bhl-search.env && chmod 600 /etc/bhl-search.env
+# It must match BHL_SEARCH_KEY in the demo's env.php. Leave the file absent to
+# run open (no key required).
 
 [Unit]
 Description=BHL image-search API (FastAPI + pgvector)
@@ -21,6 +26,7 @@ Type=simple
 User=root
 WorkingDirectory=/root/bhl-all-the-images/hetzner
 Environment=DATABASE_URL=postgresql:///bhl
+EnvironmentFile=-/etc/bhl-search.env
 ExecStart=/root/bhl-all-the-images/hetzner/.venv/bin/uvicorn search_api:app --host 0.0.0.0 --port 8000
 Restart=on-failure
 RestartSec=5

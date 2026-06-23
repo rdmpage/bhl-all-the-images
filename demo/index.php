@@ -12,7 +12,14 @@
  * then open http://localhost:8080/
  */
 
+// Local dev: env.php (gitignored) does putenv() for these. Production (Heroku):
+// set the same names as config vars. See env-template.php.
+if (file_exists(dirname(__FILE__) . '/env.php')) {
+    include 'env.php';
+}
+
 $API = getenv('BHL_SEARCH_API') ?: 'http://CHANGE-ME:8000';
+$KEY = getenv('BHL_SEARCH_KEY') ?: '';   // sent as X-API-Key if set
 
 $q       = isset($_GET['q']) ? trim($_GET['q']) : '';
 $k       = max(1, min(48, (int)($_GET['k'] ?? 12)));
@@ -22,10 +29,13 @@ $mode    = null;   // 'text' | 'image'
 
 /** Call the search API and decode its JSON, or set $error. */
 function call_api($url, $post_file = null) {
-    global $error;
+    global $error, $KEY;
     $ch = curl_init($url);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     curl_setopt($ch, CURLOPT_TIMEOUT, 30);
+    if ($KEY !== '') {
+        curl_setopt($ch, CURLOPT_HTTPHEADER, ["X-API-Key: $KEY"]);
+    }
     if ($post_file !== null) {
         curl_setopt($ch, CURLOPT_POST, true);
         curl_setopt($ch, CURLOPT_POSTFIELDS, ['file' => $post_file]);

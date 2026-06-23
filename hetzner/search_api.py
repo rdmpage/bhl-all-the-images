@@ -32,7 +32,8 @@ import numpy as np
 import torch
 import open_clip
 from PIL import Image
-from fastapi import FastAPI, UploadFile, File, Query, HTTPException
+from fastapi import (FastAPI, UploadFile, File, Query, HTTPException, Header,
+                     Depends)
 from fastapi.middleware.cors import CORSMiddleware
 from psycopg_pool import ConnectionPool
 
@@ -41,6 +42,7 @@ MODEL_NAME = os.environ.get("BHL_CLIP_MODEL", "ViT-B-32")
 PRETRAINED = os.environ.get("BHL_CLIP_PRETRAINED", "laion2b_s34b_b79k")
 DSN = os.environ.get("DATABASE_URL", "postgresql:///bhl")
 EF_SEARCH = int(os.environ.get("BHL_HNSW_EF_SEARCH", "100"))  # recall/speed knob
+API_KEY = os.environ.get("BHL_SEARCH_KEY", "")  # if set, callers must send it
 
 # Public source bucket: the same web/ webp derivatives the embedder read. These
 # are world-readable over plain HTTPS, so the UI can <img src> them directly.
@@ -62,6 +64,13 @@ app = FastAPI(title="BHL image search (dry run)")
 # Open CORS so a browser/Heroku-hosted demo on another origin can call this.
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"],
                    allow_headers=["*"])
+
+
+def require_key(x_api_key: str = Header(default="")):
+    """Gate the search endpoints on the X-API-Key header. No-op (open) when
+    BHL_SEARCH_KEY is unset, so dev/local stays frictionless."""
+    if API_KEY and x_api_key != API_KEY:
+        raise HTTPException(status_code=401, detail="missing or invalid API key")
 
 
 def image_url(barcode, seq, size="medium"):
@@ -128,13 +137,13 @@ def healthz():
             "device": _device, "vectors": n}
 
 
-@app.get("/search")
+@app.get("/search", dependencies=[Depends(require_key)])
 def search_text(q: str = Query(..., description="text query"),
                 k: int = 12, size: str = "medium"):
     return {"query": q, "k": k, "results": search(encode_text(q), k, size)}
 
 
-@app.post("/search")
+@app.post("/search", dependencies=[Depends(require_key)])
 async def search_image(file: UploadFile = File(...),
                        k: int = 12, size: str = "medium"):
     qvec = encode_image(await file.read())
