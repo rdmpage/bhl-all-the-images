@@ -1,0 +1,29 @@
+# systemd unit for the BHL image-search API. Keeps uvicorn running independent
+# of any SSH session, restarts it on crash, and starts it on boot.
+#
+# Install (on the Hetzner box, as root):
+#   cp hetzner/bhl-search.service /etc/systemd/system/
+#   systemctl daemon-reload
+#   systemctl enable --now bhl-search
+#   systemctl status bhl-search          # should be "active (running)"
+#   journalctl -u bhl-search -f          # live logs (first start loads the model)
+#
+# Adjust WorkingDirectory / ExecStart if your repo or venv live elsewhere
+# (check: ls /root/bhl-all-the-images/hetzner/.venv/bin/uvicorn).
+
+[Unit]
+Description=BHL image-search API (FastAPI + pgvector)
+After=network-online.target postgresql.service
+Wants=network-online.target postgresql.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/bhl-all-the-images/hetzner
+Environment=DATABASE_URL=postgresql:///bhl
+ExecStart=/root/bhl-all-the-images/hetzner/.venv/bin/uvicorn search_api:app --host 0.0.0.0 --port 8000
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

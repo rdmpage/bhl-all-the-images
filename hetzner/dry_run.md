@@ -174,9 +174,19 @@ apt -y install caddy
 systemctl reload caddy
 ```
 
-Then run uvicorn under systemd (so it survives logout) and the demo calls
-`https://search.example.org/search?q=...` — the same curl-an-HTTP-endpoint shape
-as the existing `bhl-elastic-test` site, just a different URL.
+Run uvicorn under **systemd** so it survives SSH disconnects, restarts on crash,
+and comes back on reboot (a foreground `uvicorn` dies with SIGHUP when your
+connection drops). Use the bundled unit:
+
+```bash
+cp bhl-search.service /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable --now bhl-search
+systemctl status bhl-search        # active (running); journalctl -u bhl-search -f for logs
+```
+
+The demo then calls `http://<box-ip>:8000/search?q=...` (or the Caddy HTTPS URL)
+— the same curl-an-HTTP-endpoint shape as the existing `bhl-elastic-test` site.
 
 > For a public endpoint, add a cheap guard before any real traffic: an API key
 > header checked in `search_api.py`, or Caddy basic-auth / rate-limiting. The
