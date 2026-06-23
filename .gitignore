@@ -9,3 +9,8 @@ results/
 tier0/
 cost_test_work/
 *.pem
+# embedding work artifacts (data, not code): shard manifests, parquet output,
+# the barcode lists fed to manifest_from_ids.py
+manifest/
+out/
+items*.txt

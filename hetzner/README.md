@@ -52,9 +52,16 @@ sent as a pgvector text literal `[v1,v2,...]` and cast `%s::halfvec` (no
 speed for recall — and note `SET` takes a literal, **not** a bind parameter, so
 the value is interpolated, not passed as `%s`.
 
+To keep it running across SSH disconnects and reboots, install it as a systemd
+service — `bhl-search.service` (a foreground `uvicorn` dies with SIGHUP when your
+connection drops). Set an optional API key in `/etc/bhl-search.env`
+(`BHL_SEARCH_KEY=...`); `search_api.py` then requires the `X-API-Key` header on
+`/search` (and `/healthz` stays open). Must match the demo's `BHL_SEARCH_KEY`.
+
 **For the full validated walkthrough — box, Postgres, pgvector build, load,
-index, serve, and the PHP demo — follow [`dry_run.md`](dry_run.md).** It is the
-tested recipe (Ubuntu 26.04 / PG 18) with every gotcha folded in.
+index, serve (systemd + key), reload-with-new-data, and the PHP demo — follow
+[`dry_run.md`](dry_run.md).** It is the tested recipe (Ubuntu 26.04 / PG 18) with
+every gotcha folded in.
 
 Image URLs are reconstructed from `(barcode, seq)` as
 `web/<bc>/<bc>_<seq:04d>_<size>.webp` on the public bucket — nothing is hosted

@@ -38,13 +38,16 @@ serving half see `../hetzner/dry_run.md`.
   | c7i.4xlarge | 16 | ~75 img/s | ~2.4h | 0.714 |
   | c7i.8xlarge | 32 | ~150 img/s | ~1.2h | 1.428 |
 
+> SSH key: if `ssh`/`scp` says *"UNPROTECTED PRIVATE KEY FILE"* and ignores the
+> key, fix its perms: `chmod 600 <key.pem>` (it refuses world-readable keys).
+
 ## 2. Install (no AWS credentials needed)
 
 The source bucket is read **unsigned** (public) and parquet is written to local
 disk, so there's nothing of yours to configure — no `aws configure`, no IAM.
 
 ```bash
-sudo dnf install -y git python3.11          # AL2023 ships neither by default
+sudo dnf install -y git python3.11 tmux     # AL2023 ships none of these by default
 git clone https://github.com/rdmpage/bhl-all-the-images.git
 cd bhl-all-the-images
 python3.11 -m venv .venv && . .venv/bin/activate
@@ -75,15 +78,27 @@ scp -i <key.pem> -r manifest/ ec2-user@<ec2-ip>:~/bhl-all-the-images/
 (Or rebuild it on the box — listing is in-region and fast — but reusing the
 validated one guarantees the same item set.)
 
-## 4. Embed
+## 4. Embed — **inside tmux**
+
+This is a multi-hour run; a foreground process dies with SIGHUP the moment your
+SSH connection drops (we lost a run to exactly this overnight). Run it in tmux so
+it survives disconnects and you can reattach to watch:
 
 ```bash
+tmux new -s embed
+. .venv/bin/activate
 bash aws/embed_local.sh manifest/ out/
+# detach: Ctrl-b then d   |   reattach later: tmux attach -t embed
 ```
 
 In-region reads of the webp derivatives; webp/medium + blank filter (min-std 10)
-by default. Resumable — if it dies, rerun and finished shards skip. It prints a
-final `embedded N vectors` tally.
+by default. The CLIP weights download once on shard 0 (`embed_local.sh` clears
+`HF_HUB_OFFLINE` so the fetch isn't blocked), then cache for the rest. Resumable
+— if it dies, rerun and finished shards skip. It ends with `loop done ... 0
+shard(s) failed` and an `embedded N vectors` tally — read both before moving on.
+
+> Expect yield somewhat below your manifest's page count: the blank filter drops
+> blank/cream pages (e.g. 635K manifest pages → ~589K vectors). That's correct.
 
 ## 5. Pull the parquet out, then up to Hetzner
 

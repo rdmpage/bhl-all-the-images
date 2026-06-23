@@ -175,41 +175,82 @@ systemctl reload caddy
 ```
 
 Run uvicorn under **systemd** so it survives SSH disconnects, restarts on crash,
-and comes back on reboot (a foreground `uvicorn` dies with SIGHUP when your
-connection drops). Use the bundled unit:
+and comes back on reboot. (Lesson learned: a foreground `uvicorn` dies with
+SIGHUP the moment your SSH connection drops — same failure as a foreground embed
+run. systemd is the fix; tmux is the stopgap.) Use the bundled unit:
 
 ```bash
+# optional API key (recommended once it's a persistent public endpoint): the
+# unit reads it from /etc/bhl-search.env, so the secret stays out of git, and it
+# must match BHL_SEARCH_KEY in the demo's env.php. Omit the file to run open.
+echo 'BHL_SEARCH_KEY=<your-uuid>' > /etc/bhl-search.env && chmod 600 /etc/bhl-search.env
+
 cp bhl-search.service /etc/systemd/system/
 systemctl daemon-reload
 systemctl enable --now bhl-search
 systemctl status bhl-search        # active (running); journalctl -u bhl-search -f for logs
 ```
 
+> First start loads/downloads the CLIP weights (~600 MB) before it's ready, so
+> give `/healthz` a minute. Check the venv path in the unit matches yours:
+> `ls /root/bhl-all-the-images/hetzner/.venv/bin/uvicorn`.
+
 The demo then calls `http://<box-ip>:8000/search?q=...` (or the Caddy HTTPS URL)
 — the same curl-an-HTTP-endpoint shape as the existing `bhl-elastic-test` site.
 
-> For a public endpoint, add a cheap guard before any real traffic: an API key
-> header checked in `search_api.py`, or Caddy basic-auth / rate-limiting. The
-> dry run behind an SSH tunnel needs none of this.
+`search_api.py` enforces the key (header `X-API-Key`) **only when**
+`BHL_SEARCH_KEY` is set, so dev stays open and prod is gated by the same code.
+`/healthz` is always open for liveness checks. Verify the gate:
+
+```bash
+curl 'http://localhost:8000/search?q=fish&k=3'                       # 401 when keyed
+curl -H 'X-API-Key: <your-uuid>' 'http://localhost:8000/search?q=fish&k=3'   # results
+```
 
 ## 7. Run the demo front-end
 
 `demo/index.php` is a thin PHP page that curls the API **server-side** (so plain
 HTTP to the box IP is fine — no CORS, no mixed-content) and renders results as a
-thumbnail grid. It runs anywhere with PHP; easiest is the built-in server on
-your laptop, pointed at the box via the `BHL_SEARCH_API` env var:
+thumbnail grid. Configure it via `demo/env.php` (copy `env-template.php`) and run
+it with PHP's built-in server, Apache, or Heroku — see **`demo/README.md`** for
+all three. Quick local check:
 
 ```bash
-# on the laptop, in the repo:
-export BHL_SEARCH_API=http://<box-ip>:8000     # the IP from step 6
-php -S localhost:8080 -t demo
-# open http://localhost:8080/
+cp demo/env-template.php demo/env.php   # then edit: set BHL_SEARCH_API (+ key)
+php -S localhost:8080 -t demo           # open http://localhost:8080/
 ```
 
 Text box = phrase search; file picker = "find similar pages" (image upload).
-If `BHL_SEARCH_API` is unset the page says so rather than erroring cryptically.
 
-## 8. Tear down
+## 8. Reloading the table with a new corpus
+
+When you swap in a bigger embed (e.g. the AWS run), reload in the **right order**
+or you hit the gotchas we did:
+
+- `TRUNCATE` clears rows but **not** the PK or HNSW index. If you load into a
+  table that still has them, the index rebuilds **incrementally during COPY**
+  (slow), and re-running `index_hetzner.sql` then errors harmlessly
+  (`multiple primary keys`, `relation ... already exists, skipping`).
+- So drop the index + PK first, truncate, load into the bare table, **then**
+  build the index — the fast bulk path:
+  ```bash
+  psql -d bhl <<'SQL'
+  DROP INDEX IF EXISTS page_embedding_hnsw;
+  ALTER TABLE page_embedding DROP CONSTRAINT IF EXISTS page_embedding_pkey;
+  TRUNCATE page_embedding;
+  SQL
+  python load_parquet.py --src ../out/ --dsn postgresql:///bhl   # read the "done: N" line
+  psql -d bhl -f ../db/index_hetzner.sql                          # should take MINUTES
+  systemctl restart bhl-search
+  ```
+- **An instant `index_hetzner.sql` is a red flag — but check before panicking.**
+  It means nothing was rebuilt: either the table is empty *or* the index already
+  existed and was populated during COPY. Don't infer from build time — verify the
+  facts: `SELECT count(*) FROM page_embedding;` and the index size
+  `SELECT pg_size_pretty(pg_relation_size('page_embedding_hnsw'));` (a real
+  589K-row HNSW is several hundred MB, e.g. ~767 MB; kilobytes = empty).
+
+## 9. Tear down
 
 The box is hourly-billed and holds nothing precious (vectors are reproducible
 from the parquet). **Delete it from the Hetzner console when finished** —
