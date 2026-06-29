@@ -41,7 +41,12 @@ from psycopg_pool import ConnectionPool
 MODEL_NAME = os.environ.get("BHL_CLIP_MODEL", "ViT-B-32")
 PRETRAINED = os.environ.get("BHL_CLIP_PRETRAINED", "laion2b_s34b_b79k")
 DSN = os.environ.get("DATABASE_URL", "postgresql:///bhl")
-EF_SEARCH = int(os.environ.get("BHL_HNSW_EF_SEARCH", "100"))  # recall/speed knob
+# recall/speed knob. Default 300: at 100, recall@12 vs exact on real text queries
+# measured only ~0.875 (the corpus-vector geometry held up far better, ~0.985) --
+# text queries land in sparse regions where the HNSW misses more, and a higher
+# ef_search buys most of that back for a few ms. Raise further if recall matters
+# more than latency. (See db/bq_eval.sql + hetzner/bq_recall_eval.py, 2026-06-29.)
+EF_SEARCH = int(os.environ.get("BHL_HNSW_EF_SEARCH", "300"))
 API_KEY = os.environ.get("BHL_SEARCH_KEY", "")  # if set, callers must send it
 
 # Public source bucket: the same web/ webp derivatives the embedder read. These

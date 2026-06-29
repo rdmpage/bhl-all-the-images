@@ -52,6 +52,13 @@ sent as a pgvector text literal `[v1,v2,...]` and cast `%s::halfvec` (no
 speed for recall — and note `SET` takes a literal, **not** a bind parameter, so
 the value is interpolated, not passed as `%s`.
 
+`ef_search` defaults to **300** (`BHL_HNSW_EF_SEARCH` to override). The earlier
+default of 100 measured only ~0.875 recall@12 vs exact on real *text* queries
+(corpus-vector geometry held up much better, ~0.985); 300 buys most of that back
+for a few ms. Set it in `/etc/bhl-search.env` to tune without editing code, e.g.
+`BHL_HNSW_EF_SEARCH=300` (alongside `BHL_SEARCH_KEY`). See `db/bq_eval.sql` +
+`bq_recall_eval.py` for the recall harness behind these numbers.
+
 To keep it running across SSH disconnects and reboots, install it as a systemd
 service — `bhl-search.service` (a foreground `uvicorn` dies with SIGHUP when your
 connection drops). Set an optional API key in `/etc/bhl-search.env`

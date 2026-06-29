@@ -15,6 +15,10 @@
 #   echo 'BHL_SEARCH_KEY=<your-uuid>' > /etc/bhl-search.env && chmod 600 /etc/bhl-search.env
 # It must match BHL_SEARCH_KEY in the demo's env.php. Leave the file absent to
 # run open (no key required).
+#
+# Other tunables can go in the same /etc/bhl-search.env (one KEY=value per line):
+#   BHL_HNSW_EF_SEARCH=300   # recall/speed knob; code default is 300
+# After editing the env file: systemctl restart bhl-search
 
 [Unit]
 Description=BHL image-search API (FastAPI + pgvector)
